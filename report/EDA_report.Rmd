@@ -1,0 +1,609 @@
+---
+title: "Progetto_statistica_descrittiva_Matteo"
+author: "Matteo Peroni"
+date: "2025-11-27"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Caricamento librerie necessarie
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!requireNamespace("moments", quietly = TRUE)) install.packages("moments")
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+library(dplyr)
+library(moments)
+library(ggplot2)
+library(scales) # Per formattazione assi
+```
+
+# Introduzione e Caricamento Dati
+
+In questo documento analizziamo il dataset delle vendite immobiliari. Dopo aver caricato i dati, verifichiamo la struttura per assicurarci che le variabili siano lette correttamente.
+
+```{r load_data}
+url <- "https://drive.google.com/uc?export=download&id=1O4If8876MTwstkrZX0BqpQ_BxcsIMEko"
+data <- read.csv(url)
+
+# FIX IMPORTANTE:
+# Il mese è spesso numerico nel CSV originale. Creiamo subito una colonna 'date'
+# e una versione fattore del mese per evitare problemi con i grafici e le probabilità.
+data$month_num <- data$month
+data$month_name <- factor(data$month, levels = 1:12, labels = month.name)
+data$year_factor <- as.factor(data$year)
+
+# Anteprima struttura
+str(data)
+```
+
+---
+
+# Problema 2: Analisi Descrittiva
+
+## 1. Indici di Posizione, Variabilità e Forma
+
+Prima di calcolare gli indici, definiamo le variabili statistiche utilizzate:
+
+* **Media:** Il valore atteso centrale della distribuzione.
+* **Deviazione Standard (SD):** Misura quanto i dati sono dispersi attorno alla media.
+* **Skewness (Asimmetria):** Misura la simmetria della distribuzione. 
+    * *Valore = 0:* Simmetrica.
+    * *Valore > 0:* Coda destra lunga (valori alti rari).
+    * *Valore < 0:* Coda sinistra lunga.
+* **Kurtosis (Curtosi):** Misura la "pesantezza" delle code rispetto a una normale.
+    * *Valore > 3:* Code pesanti (più outlier).
+
+```{r desc_stats}
+quant_vars <- c("sales", "volume", "median_price", "listings", "months_inventory")
+
+# Creiamo un data frame riassuntivo per una lettura più pulita rispetto ai print()
+stats_summary <- data.frame()
+
+for (var in quant_vars) {
+  vec <- data[[var]]
+  temp <- data.frame(
+    Variabile = var,
+    Media = mean(vec, na.rm = TRUE),
+    SD = sd(vec, na.rm = TRUE),
+    Skewness = skewness(vec, na.rm = TRUE),
+    Kurtosis = kurtosis(vec, na.rm = TRUE)
+  )
+  stats_summary <- rbind(stats_summary, temp)
+}
+
+knitr::kable(stats_summary, digits = 2, caption = "Statistiche Descrittive Variabili Quantitative")
+```
+```{r}
+# Analisi delle Distribuzioni
+
+## 1. Variabili Quantitative (Istogrammi)
+
+# Lista delle variabili quantitative
+quant_vars <- c("sales", "volume", "median_price", "listings", "months_inventory")
+
+# Ciclo per stampare un grafico per ogni variabile
+for (var in quant_vars) {
+  
+  # Calcolo la media per tracciare una linea di riferimento
+  mean_val <- mean(data[[var]], na.rm = TRUE)
+  
+  p <- ggplot(data, aes_string(x = var)) +
+    # Istogramma: uso 'y = ..density..' per sovrapporre la curva
+    geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "white") +
+    # Curva di densità
+    geom_density(alpha = 0.2, fill = "blue") +
+    # Linea della media
+    geom_vline(aes(xintercept = mean_val), color = "red", linetype = "dashed", size = 1) +
+    labs(title = paste("Distribuzione di:", var),
+         subtitle = paste("Linea rossa = Media (", round(mean_val, 2), ")"),
+         x = var,
+         y = "Densità") +
+    theme_minimal()
+  
+  # In un ciclo for, bisogna usare print() esplicitamente per mostrare il grafico
+  print(p)
+}
+```
+Notiamo come le variabili Sales, Volume e Listing siano distribuite in modo asimmetrico positivo, perciò motle più osservazioni per valori più bassi. Mentre Months_inventory e e Median_price si distribuiscono più come una normale (infatti hanno indici di asimmetria più vicini allo 0 rispetto alle altre), perciò in questo caso usare la media come indice di posizione è ottimale.
+
+
+
+### Distribuzioni di Frequenza (Variabili Qualitative)
+
+Analizziamo il bilanciamento del dataset osservando le frequenze per città.
+
+```{r freq_dist}
+# City
+table(data$city)
+ggplot(data, aes(x = reorder(city, city, function(x)-length(x)))) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Conteggio Osservazioni per Città",
+       x = "Città", 
+       y = "Osservazioni") +
+  coord_flip() + # Ruota il grafico per leggere meglio le etichette
+  theme_minimal()
+```
+Possiamo vedere come le città abbiano lo stesso numero di osservazioni, questo ci permette di avere maggiore precisione durante l'analisi e di non incorrere magari al rischio di "avere meno informazioni" perché si è osservato meno il fenomeno nelle varie città.
+
+
+## 2. Variabilità e Asimmetria
+
+Per confrontare la variabilità tra grandezze con unità di misura diverse (es. Dollari vs Numero di case), utilizziamo il **Coefficiente di Variazione (CV)**: $CV = \frac{\sigma}{\mu} \times 100$.
+
+```{r cv_skew}
+# Calcolo CV
+cv_results <- stats_summary %>%
+  mutate(CV = (SD / Media) * 100,
+         Abs_Skewness = abs(Skewness)) %>%
+  select(Variabile, CV, Abs_Skewness) %>%
+  arrange(desc(CV))
+
+knitr::kable(cv_results, digits = 2, caption = "Confronto Variabilità (CV) e Asimmetria")
+
+# Estrazione risultati
+max_cv_var <- cv_results$Variabile[1]
+max_skew_var <- cv_results$Variabile[which.max(cv_results$Abs_Skewness)]
+```
+
+**Considerazioni Statistiche:**
+* La variabile con la **maggiore variabilità** è **`r max_cv_var`**. Questo indica che questa metrica fluttua molto di più rispetto alla sua media rispetto alle altre, rendendola meno prevedibile.
+* La variabile con la **distribuzione più asimmetrica** è **`r max_skew_var`**. Un'alta asimmetria suggerisce che la media non è un buon rappresentante centrale e che ci sono forti outlier in una direzione.
+
+## 3. Classi di Vendita e Indice di Gini
+
+Selezioniamo la variabile `sales`, la dividiamo in classi e calcoliamo l'eterogeneità.
+
+**Cos'è l'Indice di Gini?** È una misura di eterogeneità. Nel contesto delle classi di frequenza:
+* **0:** Massima concentrazione (tutti i dati sono in una sola classe).
+* **~1:** Massima eterogeneità (i dati sono sparsi equamente tra tutte le classi).
+
+```{r gini_sales}
+# Creazione classi
+num_classes <- 5
+data$sales_class <- cut(data$sales, breaks = num_classes, include.lowest = TRUE)
+
+freq_table <- table(data$sales_class)
+prop_table <- prop.table(freq_table)
+
+# Calcolo Gini
+gini_index <- 1 - sum(prop_table^2)
+
+# Grafico a barre
+barplot(freq_table, 
+        main = "Distribuzione frequenza sales per classi", 
+        col = "skyblue", 
+        xlab = "Classi di Vendita", ylab = "Frequenza")
+```
+
+**Risultato Gini:** L'indice calcolato è **`r round(gini_index, 3)`**. 
+Questo valore ci dice come le vendite si distribuiscono tra le fasce. Il risultato ci fa capire che le vendite non sono distribuite uniformemente tra le classi, ma che ci sono alcuni mesi con più vendite rispetto ad altri come dimostrato successivamente dal grafico a barre sovrapposto dove si aggregano le vendite per ogni mese di ogni anno.
+
+
+
+```{r}
+# 1. Definizione delle classi (se non già definite nel blocco precedente)
+num_classes <- 5
+# Usiamo il range globale per rendere le città comparabili tra loro
+data$volume_class <- cut(data$volume, breaks = num_classes, include.lowest = TRUE)
+
+# 2. Calcolo dell'Indice di Gini per ogni Città
+gini_per_city <- data %>%
+  group_by(city) %>%
+  summarise(
+    # Calcolo Gini interno: 1 - somma delle proporzioni al quadrato
+    gini_index = 1 - sum(prop.table(table(volume_class))^2)
+  ) %>%
+  arrange(desc(gini_index)) # Ordiniamo dalla città più eterogenea
+
+# 3. Visualizzazione della tabella con i valori calcolati
+knitr::kable(gini_per_city, 
+             col.names = c("Città", "Indice di Gini (Volume)"), 
+             digits = 3,
+             caption = "Indice di Eterogeneità del Volume per Città")
+
+# 4. Visualizzazione Grafica
+ggplot(data, aes(x = volume_class, fill = city)) +
+  geom_bar() +
+  facet_wrap(~ city, scales = "free_x") + 
+  labs(title = "Distribuzione delle Classi di Volume per Città",
+       subtitle = "Confronto della concentrazione del fatturato",
+       x = "Classi di Volume ($)",
+       y = "Frequenza (Mesi)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "none")
+```
+In questa sezione analizziamo come si distribuisce il volume d'affari all'interno di ogni città.
+Utilizziamo le classi di volume globali calcolate precedentemente per vedere se le città si posizionano su fasce diverse o se variano tra fasce diverse.
+
+*Nota importante:* come mostrato Wichita Falls ha indice 0 ciò non significa che è il volume di vendita è equidistribuito all'interno delle classi, ma è dato dal fatto che questa città ha un range così poco ampio di volume rispetto alle altre che viene tutto rappresentato da una classe singola che racchiude tutto il volume, perciò per forza di cose risulterà indice = 0, ma non è da considerare. 
+
+
+## 4. Calcolo Probabilità
+
+*Correzione Feedback:* Nel dataset originale i mesi sono numeri. Usiamo i numeri o la colonna fattore creata all'inizio per evitare probabilità zero.
+
+```{r probabilities}
+n_total <- nrow(data)
+
+# Probabilità Città = Beaumont
+p_beaumont <- sum(data$city == "Beaumont") / n_total
+
+# Probabilità Mese = Luglio (Luglio è il mese 7)
+p_july <- sum(data$month_num == 7) / n_total
+
+
+prob_df <- data.frame(
+  Evento = c("Città è Beaumont", "Mese è Luglio"),
+  Probabilità = c(p_beaumont, p_july)
+)
+
+prob_d <- data.frame(Evento = "Città è Beaumont", Prob = p_beaumont)
+
+knitr::kable(prob_d, digits = 4)
+knitr::kable(prob_df, digits = 4)
+```
+Beaumont ha il 25% di probabilità di essere ossere osservato nel dataset. Mentre la probabilitò di avere un osservazione nel mese di luglio è dell'8,3%.
+
+
+## 5 & 6. Nuove Variabili (Prezzo Medio e Efficacia)
+
+Creiamo `avg_price_per_sale` e `ad_effectiveness` (vendite per annuncio).
+
+```{r new_vars}
+# Calcolo delle nuove variabili e ordinamento immediato del dataset
+data <- data %>%
+  mutate(
+    avg_price_per_sale = ifelse(sales > 0, volume / sales, NA),
+    ad_effectiveness = ifelse(listings > 0, sales / listings, NA)
+  ) %>%
+  # Ordino il dataset in base all'efficacia decrescente
+  arrange(desc(ad_effectiveness))
+
+# Visualizziamo l'anteprima delle prime 100 righe ordinate
+# Nota: Dato che 'data' è già stato ordinato sopra, qui basta selezionare e stampare
+head(data %>% select(city, sales, listings, ad_effectiveness), 100)
+```
+Possiamo dedurre che gli annunci pubblicitari nella città di Bryan-College Station sono stati più efficaci in termini di vendita. Rapporto vendite/annunci. Ciò viene tradotto come: 10 annunci che in alcuni casi hanno portato a quasi 4 vendite nella città di Bryan-College Station.
+
+```{r}
+# Aggregazione totale per Città
+city_aggregated_stats <- data %>%
+  group_by(city) %>%
+  summarise(
+    total_sales = sum(sales, na.rm = TRUE),      # Somma totale vendite
+    total_listings = sum(listings, na.rm = TRUE) # Somma totale annunci
+  ) %>%
+  # Calcolo dell'efficacia aggregata (Totale Vendite / Totale Listing)
+  mutate(aggregated_ad_effectiveness = total_sales / total_listings) %>%
+  # Ordino dalla città più efficace a quella meno efficace
+  arrange(desc(aggregated_ad_effectiveness))
+
+# Visualizzazione della tabella formattata
+knitr::kable(city_aggregated_stats, 
+             digits = 4, 
+             caption = "Performance Aggregata per Città (Totale Storico)")
+```
+Mentre qui possiamo notare come a netto del periodo di tempo, la città Bryan-College Station si dimostra avere ancora un'efficacia maggiore rispetto alle altre. Mentre Wichita Falls si posiziona in seconda posizione, ma comunque come riportato durante questa analisi si dimostra come sia la meno performante in termini di vendita.
+
+```{r}
+ggplot(data, aes(x = reorder(city, ad_effectiveness, FUN = median, na.rm = TRUE), 
+                 y = ad_effectiveness, 
+                 fill = city)) +
+  # Boxplot per statistiche (mediana e quartili)
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) + 
+  # Aggiungo i punti reali (jitter) per vedere la densità dei dati ed eventuali casi particolari
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+  labs(title = "Distribuzione Efficacia Annunci per Città",
+       subtitle = "Boxplot ordinato per mediana crescente",
+       x = "Città",
+       y = "Efficacia (Vendite / Annunci)") +
+  theme_minimal() +
+  theme(legend.position = "none") # Rimuovo la legenda perché ridondante
+```
+Infatti come citato sopra possiamo vedere tramite boxplot come la distribuzione dell'efficacia pubblicitaria nelle varie città abbia media e range interquartile più alta e ampio rispetto le altre. Ciò significa che è stato possibile registrare un'efficacia pubblicitaria molto più alta e quindi più vendite.
+
+
+## 7. Analisi Condizionata
+
+Analizziamo come variano le vendite medie per città.
+
+
+```{r cond_city}
+city_summary <- data %>%
+  group_by(city) %>%
+  summarise(median_sales = median(sales, na.rm = TRUE))
+
+ggplot(city_summary, aes(x = reorder(city, -median_sales), y = median_sales)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Vendite medie per città", x = "Città", y = "Mediana Vendite") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Il grafico mostra chiaramente quali sono i mercati più grandi in termini di volume assoluto di transazioni.
+Tyler ha la media in vendita maggiore rispetto le altre, ma dato che è una variabile molto asimmetrica non possiamo dire con certezza che sia la città migliore per fare affari.
+
+---
+
+# Problema 3: Visualizzazioni Avanzate
+
+## 1. Boxplot: Prezzi per Città
+
+Utilizziamo i boxplot per visualizzare la mediana e la dispersione (IQR).
+
+```{r boxplot_price}
+ggplot(data, aes(x = city, y = median_price)) +
+  geom_boxplot(fill = "lightblue", outlier.colour = "red") +
+  labs(title = "Distribuzione prezzo mediano per città", 
+       y = "Prezzo Mediano ($)", x = "Città") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Interpretazione:** I boxplot permettono di vedere non solo il prezzo centrale (linea nera), ma anche la variabilità del mercato. Città con box più "alti" hanno prezzi molto variabili. I punti rossi indicano valori anomali (outlier).
+
+Possiamo dedurre dai boxplot che i range interquartili del prezzo mediano non cambia molto da città a città, quindi variano allo stesso modo ma con medie differenti. 
+
+In conclusione Wichita Falls è la città che si discosta di più in termine di prezzo mediano di vendita tra le altre città e fluttua leggermente di più rispetto gli altri, deduco quindi che Wichita Falls è il posto in cui si vende a prezzo inferiore rispetto ad altri in termini mediani.
+
+## 2. Boxplot Raggruppato: Volume per Anno e Città
+
+*Risposta al feedback:* Uniamo le dimensioni Anno e Città in un unico grafico per vedere l'evoluzione.
+
+```{r boxplot_grouped}
+ggplot(data, aes(x = year_factor, y = volume, fill = city)) +
+  geom_boxplot() +
+  labs(title = "Distribuzione volume vendite: confronto anno vs città",
+       x = "Anno", y = "Volume ($)", fill = "Città") +
+  theme_minimal()
+```
+
+Questo grafico è denso ma informativo: ci permette di vedere se, anno dopo anno, la distribuzione del volume di affari è cambiata specificamente per alcune città.
+
+Possiamo vedere come in Tyler e Bryan-College Station le vendite siano salite durante gli anni in modo positivo, anche se nel 2013 a Tyler si sono rilevate in alcuni casi volumi di vendite ($) che hanno raggiunto lo stesso livello dell'anno 2014.
+
+Mentre per le altre due città notiamo come a Beaurmont non sia cambiato molto si oscilla da 25 a 35 milioni in vendite media negli anni e a Wichita Falls si nota un trend decrescente di vendite.
+
+## 3. Grafico a Barre Sovrapposte (Stacked)
+
+Confrontiamo le vendite mensili totali, evidenziando il contributo di ogni città.
+
+```{r stacked_bar}
+monthly_sales <- data %>%
+  group_by(month_name, city) %>%
+  summarise(total_sales = sum(sales), .groups = 'drop')
+
+ggplot(monthly_sales, aes(x = month_name, y = total_sales, fill = city)) +
+  geom_col() +
+  labs(title = "Vendite totali per mese (contributo per città)",
+       x = "Mese", y = "Totale Vendite") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Notiamo la stagionalità: i mesi estivi (Maggio-Giugno-Luglio) tendono ad avere barre più alte, indicando un mercato più attivo in tutte le città, la città in cui fluttua meno durante i mesi e Wichita Falls in cui si ha un periodo da Marzo ad Agosto in cui si ha più o meno lo stesso totale di vendite, ma è anche vero che il totale per ogni mese è molto più basso comparato alle le altre città.
+
+## 4. Line Chart: Serie Storica
+
+Costruiamo una data corretta per visualizzare il trend temporale continuo.
+
+```{r line_chart}
+# Creazione colonna Date corretta (giorno 1 di ogni mese/anno)
+data$date_obj <- as.Date(paste(data$year, data$month_num, "01", sep="-"))
+
+# Aggregazione
+time_series <- data %>%
+  group_by(date_obj, city) %>%
+  summarise(median_price = mean(median_price), .groups = 'drop')
+
+ggplot(time_series, aes(x = date_obj, y = median_price, color = city)) +
+  geom_line(size = 1) +
+  labs(title = "Trend temporale del prezzo mediano",
+       x = "Data", y = "Prezzo Mediano ($)") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal()
+```
+```{r}
+library(dplyr)
+library(zoo)
+library(ggplot2)
+
+# 1. Preparazione Data
+data$date_obj <- as.Date(paste(data$year, data$month_num, "01", sep="-"))
+
+# 2. Aggregazione e Calcolo Media Mobile per Città
+time_series <- data %>%
+  group_by(date_obj, city) %>%
+  summarise(median_price = mean(median_price), .groups = 'drop') %>%
+  arrange(city, date_obj) %>%  # Fondamentale ordinare per data
+  group_by(city) %>%           # Raggruppo per città così il calcolo è separato
+  mutate(moving_avg = rollmean(median_price, k = 12, fill = NA, align = "right"))
+
+# 3. Creazione del Grafico con Facet Wrap
+ggplot(time_series, aes(x = date_obj, y = median_price)) +
+  
+  # A. La linea originale dei dati reali (grigia o colorata tenue per sfondo)
+  geom_line(aes(color = city), alpha = 0.4, size = 0.6) +
+  
+  # B. La Media Mobile (Viola): 
+  # Specificando 'group = city', R disegna una linea viola distinta per ogni città
+  geom_line(aes(y = moving_avg, group = city), color = "purple", size = 1.2) +
+  
+  # C. Suddivisione in 4 riquadri (uno per città)
+  facet_wrap(~ city, scales = "free_y") + 
+  
+  # D. Etichette e Stile
+  labs(title = "Trend del prezzo mediano per città",
+       subtitle = "Dati reali (colore) vs Media Mobile a 12 mesi (viola)",
+       x = "Data", 
+       y = "Prezzo Mediano ($)") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") # Rimuovo la legenda perché i nomi sono già sopra i grafici
+```
+
+Il grafico mostra chiaramente come alcune città abbiano trend di crescita dei prezzi molto più marcati rispetto ad altre che rimangono stabili.
+
+Possiamo dire che a Bryan-College Station si sono rilevati prezzi mediani maggiori di vendita e quindi gli immobili sono stati venduti ad un prezzo più alto rispetto alle altre città con un trend sempre crescente durante gli anni, lo stesso per la città di Tyler ma con prezzi leggermente inferiori.
+
+Notiamo come a Beaumont ci sia stato una forte discesa del prezzo di vendita mediano tra inizio 2010 e metà 2010 che si è ripetuto a fine 2013. Ma comunque sia a Beaumont che a Wichita Falls non si notano trend crescenti, vediamo come la media mobile 
+
+La linea viola rappresenta la media mobile di ogni serie temporale, dimostrando i trend sopra citati.
+
+---
+```{r}
+# Analisi Distribuzione Months Inventory per Città
+
+# 1. Creazione del Grafico a Boxplot
+ggplot(data, aes(x = reorder(city, months_inventory, FUN = median, na.rm = TRUE), 
+                 y = months_inventory, 
+                 fill = city)) +
+  # Boxplot per mostrare mediana e quartili
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  
+  # Aggiungo i punti (jitter) per vedere la densità reale delle osservazioni
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+  
+  # Linea di riferimento (opzionale): 6 mesi è spesso considerato un mercato "bilanciato"
+  geom_hline(yintercept = 6, linetype = "dashed", color = "red", size = 0.8) +
+  
+  labs(title = "Distribuzione dei Mesi di Inventario per Città",
+       subtitle = "La linea rossa tratteggiata (6 mesi) indica un mercato bilanciato.\nSotto = Mercato del venditore; Sopra = Mercato del compratore.",
+       x = "Città",
+       y = "Mesi di Inventario (Months Inventory)") +
+  theme_minimal() +
+  theme(legend.position = "none") # Rimuovo legenda ridondante
+
+# 2. Tabella di sintesi (Statistiche aggregate)
+inventory_stats <- data %>%
+  group_by(city) %>%
+  summarise(
+    Mean_Inventory = mean(months_inventory, na.rm = TRUE),
+    Median_Inventory = median(months_inventory, na.rm = TRUE),
+    Min_Inventory = min(months_inventory, na.rm = TRUE),
+    Max_Inventory = max(months_inventory, na.rm = TRUE)
+  ) %>%
+  arrange(Median_Inventory)
+
+knitr::kable(inventory_stats, digits = 2, caption = "Statistiche di Inventario per Città")
+```
+
+
+```{r}
+# Aggregazione: Somma dei listings per Anno e Città
+total_listings_year_city <- data %>%
+  group_by(year, city) %>%
+  summarise(total_listings = sum(listings, na.rm = TRUE), .groups = 'drop')
+
+# Visualizzazione
+ggplot(total_listings_year_city, aes(x = as.factor(year), y = total_listings, fill = city)) +
+  
+  # position = "dodge" serve a mettere le barre affiancate e non una sopra l'altra
+  geom_col(position = "dodge", alpha = 0.9) +
+  
+  # Aggiungo le etichette con i numeri sopra ogni barra per precisione
+  geom_text(aes(label = total_listings), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            size = 3) +
+  
+  labs(title = "Totale Listings (Inventario) per Anno e Città",
+       subtitle = "Confronto diretto del volume di offerta immobiliare",
+       x = "Anno",
+       y = "Totale Listings",
+       fill = "Città") +
+  
+  theme_minimal() +
+  # Espando leggermente l'asse Y per far entrare le etichette numeriche
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme(legend.position = "top")
+```
+I boxplot sopra ci aiutano a capire come si distribuisce la variabile month_inventory, quindi la variabile che determina il tempo in mesi che separa l'avvio dell'annuncio e la vendita effettiva dell'immobile. Riprendendo la tabella dove viene mostrata l'efficacia degli annunci aggregata per città è curioso come Wichita Falls si posiziona seconda per efficacia migliore, anche se le vendite sono minori in totale rispetto le altre, quindi posso dedurre che in Wichita Falls ci sia un mercato molto più liquido, con meno annunci ma gli immobili vengono venduti prima in termini di tempo.
+
+# Problema 4: Efficacia Annunci vs Prezzo
+
+Esploriamo se le case più costose sono più difficili da vendere (efficacia annunci inferiore).
+
+```{r scatter_eff}
+ggplot(data, aes(x = median_price, y = ad_effectiveness)) +
+  geom_point(alpha = 0.5, color = "darkgreen") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) + # Aggiunta linea di tendenza
+  facet_wrap(~ city, scales = "free") +
+  labs(title = "Relazione: prezzo mediano vs efficacia annunci",
+       subtitle = "Suddiviso per città",
+       x = "Prezzo Mediano ($)", y = "Efficacia (vendite / annunci)") +
+  theme_bw()
+```
+```{r}
+# 1. Aggregazione dei dati
+# Sommiamo i listings di tutte le città per ogni mese/anno
+listings_comparison <- data %>%
+  group_by(year, month_num) %>%
+  summarise(total_listings = sum(listings, na.rm = TRUE), .groups = 'drop') %>%
+  # Creiamo la label del mese ordinata
+  mutate(month_label = factor(month.name[month_num], levels = month.name))
+
+# 2. Creazione del Grafico (Line Chart Multiplo)
+ggplot(listings_comparison, aes(x = month_label, y = total_listings, group = factor(year), color = factor(year))) +
+  
+  # Linee di tendenza
+  geom_line(size = 1.2) +
+  
+  # Punti per evidenziare il valore esatto di ogni mese
+  geom_point(size = 3, alpha = 0.8) +
+  
+  # Etichette e Titoli
+  labs(title = "Confronto stagionale dei listings (annunci attivi)",
+       subtitle = "Ogni linea rappresenta un anno diverso",
+       x = "Mese",
+       y = "Totale Listings",
+       color = "Anno") +
+  
+  # Scala Y formattata con virgole per leggibilità (richiede library scales)
+  scale_y_continuous(labels = comma) +
+  
+  # Tema pulito
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Ruota i mesi per leggerli meglio
+        legend.position = "top") # Legenda in alto per risparmiare spazio laterale
+```
+
+
+**Commento Finale:** L'uso del `facet_wrap` è fondamentale qui. In alcune città potremmo notare che all'aumentare del prezzo, l'efficacia (punti sull'asse Y) diminuisce, suggerendo che immobili di lusso rimangono sul mercato più a lungo o richiedono più listing per essere venduti.
+
+Mentre il periodo estivo (maggio-giugno-luglio-agosto) è molto più proficuo in termini di portare a casa vendite, come mostra il grafico sopra questo fenomeno è anche dovuto al fatto che tutti gli anni prima del periodo estivo, quindi inizio Maggio, ci siano molti più annunci in circolazione.
+
+Tyler e Bryan-College Station sono le città in cui si è rilevato un trend di crescita in termini di volumi di vendita e prezzo mediano di vendita, mentre le altre due sono rimaste stabili sotto questo aspetto con Wichita Falls che rimane per certo la città con le prestazioni peggiori negli ultimi anni in termini di vendite e volumi.
+
+Per quanto riguarda l'efficacia degli annunci, Bryan-College Station è la città in cui gli annunci hanno avuto efficacia maggiore rapportato alle vendite effettuate. Ma Wichita Falls è la città con mercato più liquido di tutti, anche se con meno vendite e meno annunci, ma gli immobili sponsorizzati vengono venduti con tempo minore.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
