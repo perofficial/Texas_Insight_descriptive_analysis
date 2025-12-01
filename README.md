@@ -85,7 +85,7 @@ Per visualizzare il report interattivo completo con grafici e commenti, visita l
 
 ```text
 ├── data/               # Dataset originale
-├── scripts/            # Codice R
+├── script/             # Codice R
 ├── images/             # Grafici salvati in .png/.jpg
-├── analisi.Rmd         # File RMarkdown principale
+├── report/             # File RMarkdown principale
 └── README.md           # Questo file
